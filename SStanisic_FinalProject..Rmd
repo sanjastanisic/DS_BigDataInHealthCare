@@ -1,0 +1,691 @@
+---
+title: "Big Data in Health Care - Final Project - LAB 2"
+author: "Sanja Stanisic, Universita' degli Studi di Milano Bicocca, CdLM Data Science, n. 800409"
+date: " 03/06/2021"
+output:
+  prettydoc::html_pretty:
+    df_print: paged
+    highlight: vignette
+    theme: architect
+    toc: yes
+    toc_depth: 5
+  pdf_document:
+    toc: yes
+    toc_depth: 5
+  ioslides_presentation:
+    css:
+    - css/fonts.css
+    - css/custom.css
+    - css/title-slide.css
+    - css/slide-background.css
+    includes:
+      before_body: html/title.html
+    toc: yes
+    transition: default
+    widescreen: yes
+  beamer_presentation:
+    colortheme: lily
+    fig_caption: no
+    fig_height: 6
+    fig_width: 7
+    fonttheme: structurebold
+    theme: Hannover
+    toc: yes
+  word_document:
+    toc: yes
+    toc_depth: '5'
+  slidy_presentation:
+    highlight: default
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '5'
+course: Big Data in Public Health
+---
+
+```{r setup, include=FALSE}
+# Use 'verbatim = TRUE' as chunk option to show chunk code as is
+if(require(knitr)==FALSE) install.packages("knitr")
+hook_source_def = knit_hooks$get('source')
+knit_hooks$set(source = function(x, options){
+  if (!is.null(options$verbatim) && options$verbatim){
+    opts = gsub(",\\s*verbatim\\s*=\\s*TRUE\\s*", "", options$params.src)
+    bef = sprintf('\n\n    ```{r %s}\n', opts, "\n")
+    stringr::str_c(bef, paste(knitr:::indent_block(x, "    "), collapse = '\n'), "\n    ```\n")
+  } else {
+     hook_source_def(x, options)
+  }
+})
+
+```
+
+```{r eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+library(tidyr)
+library(dplyr)
+library(data.table)
+
+library(ggplot2)
+```
+
+## 1. Analisi descrittiva 
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+data <- read.delim("breast.cancer.txt")
+
+#tibble(data)
+
+```
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+
+dataF <- data
+
+dataF$event <- as.factor(dataF$event)
+dataF$Diam <- as.factor(dataF$Diam)
+dataF$N <- as.factor(dataF$N)
+dataF$ER <- factor(dataF$ER, levels = c("Positive", "Negative"))
+dataF$Grade <- factor(dataF$Grade, levels = c("Well diff","Intermediate","Poorly diff"))
+
+#tibble(dataF)
+
+#summary(dataF)
+
+```
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+dups<- dataF$idnum[which(duplicated(dataF$idnum))]
+dups
+length(dups)
+
+```
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+dataF_clin <- dataF[-c(9:78)]
+
+summary(dataF_clin)
+#tibble(dataF_clin)
+```
+
+
+Questo dataset contiene i risultati di uno studio osservazionale sulla sopravvivenza libera da metastasi in donne affette da carcinoma mammario con coinvolgimento linfonodale. Ci sono **144** record e **78** variabili, di cui **70** variabili sono misure di espressioni geniche di geni potenzialmente prognostici. 
+
+Non risultano dati mancanti, né duplicati. 
+
+La variabile **'id'** è una variabile numerica e  rappresenta il codice univoco delle pazienti. Le altre 7 variabili ( oltre alle 70 espressioni geniche) hanno la seguente struttura: 
+
+### 1.1. La variabile 'time' - tempo di follow-up libero da metastasi  
+
+La variabile 'time', che indica il tempo di follow-up libero da metastasi, è una variabile continua con minimo a 0,05 mesi (1.5 giorno) e massimo 17.66 mesi (quasi 1.5 anno). Tempo medio di follow up è 7.35 mesi.
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+boxplot(dataF$time,col = "dodgerblue2",main ="Boxplot of time",col.main="dodgerblue4")
+
+ggplot(dataF,aes(x = time)) + 
+  geom_histogram(fill ="dodgerblue4") + 
+  theme_bw() + 
+  theme_classic() + 
+  ggtitle("Distribuzione del tempo di follow up") + 
+  ylab("Numero di donne")
+
+```
+
+
+### 1.2 La variabile 'event' - indicatore di evento 
+
+La variabile 'event' è una variabile dicotomica, con valori '0' per le censure e '1' per evento (metastasi o morte). 
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(dataF,aes(x = event)) + 
+  geom_bar(width = 0.4,fill =c("dodgerblue4","light blue")) + 
+  geom_text(stat = 'count', aes(label =..count..),vjust =-0.5) + 
+  theme_bw() + 
+  theme_classic() + 
+  ylab("numero di donne") + 
+  ggtitle("Distribuzione del numero di eventi") 
+```
+
+Come si evince dalla rappresentazione grafica, 48 donne su 144 hanno avuto l'evento, ovvero hanno avuto metastasi o sono morte. Le rimanenti 96 pazienti sono state censurate entro la fine del periodo di follow-up. 
+
+
+### 1.3 La variabile 'Diam' - diamtero del tumore
+
+La variabile 'Diam', contenente i valori del diametro del tumore, è una variabile dicotomica con categorie: tumore con diametro minore/uguale a 2cm e tumore con diametro maggiore di 2cm. Ai fini delle future analisi questa variabile viene fattorizzata, con valore <= 2 cm come livello di riferimento. 
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(dataF,aes(x = Diam)) + 
+  geom_bar(width = 0.4,fill =c("dodgerblue4","light blue")) + 
+  geom_text(stat = 'count', aes(label =..count..),vjust =-0.5) + 
+  theme_bw() + 
+  theme_classic() + 
+  ylab("numero di donne") + 
+  ggtitle("Distribuzione delle pazienti per il diametro del tumore") 
+
+ggplot(dataF,aes(x =Diam, fill=event)) + 
+  geom_bar(width = 0.2) + 
+  geom_text(stat = 'count',aes(label =..count..), position=position_dodge(width=0.9), vjust=-0.5, size = 0) + 
+  scale_fill_manual(values=c("dodgerblue4", "light blue")) +
+  theme_bw() + 
+  theme_classic() + 
+  ylab("Numero di donne") + 
+  ggtitle("Distribuzione di eventi per il diametro del tumore") 
+
+```
+
+In questo dataset, 73 donne su 144 hanno avuto tumore di diamentro minore o uguale a 2cm, le rimanenti 71 hanno avuto tumore di diametro maggiore di 2cm. E' evidente che ci sono molti più eventi in donne con tumori maggiori di 2cm. Il diametro del tumore è una delle caratteristiche in base alle quali viene stabilito lo stadio della malattia. Diametri maggiori di 2 cm corrispondono agli stadi più avanzati della malattia.   
+
+### 1.4 La variabile 'N' - numero di linfonodi coinvolti
+
+La variabile 'N' - numero di linfonodi coinvolti, è una variabile dicotomica con categorie:  meno di 4 linfonodi coinvolti e  4 o più linfonodi coinvolti. Ai fini delle future analisi questa variabile viene fattorizzata, con valore ' < 4 ' linfonodi come livello di riferimento. 
+
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(dataF,aes(x = N)) + 
+  geom_bar(width = 0.4,fill =c("dodgerblue4","light blue")) + 
+  geom_text(stat = 'count', aes(label =..count..),vjust =-0.5) + 
+  theme_bw() + 
+  theme_classic() + 
+  ylab("numero di donne") + 
+  ggtitle("Distribuzione delle pazienti per il numero di linfonodi coinvolti") 
+
+ggplot(dataF,aes(x =N, fill=event)) + 
+  geom_bar(width = 0.2) + 
+  geom_text(stat = 'count',aes(label =..count..), position=position_dodge(width=0.9), vjust=-0.5, size = 0) + 
+  scale_fill_manual(values=c("dodgerblue4", "light blue")) +
+  theme_bw() + 
+  theme_classic() + 
+  ylab("Numero di donne") + 
+  ggtitle("Distribuzione di eventi per il numero di linfonodi coinvolti") 
+
+
+```
+
+In questo dataset 106 pazienti su 144 hanno avuto metastasi regionali in meno di 4 linfonodi, alle rimanenti 38 le metastasi regionali sono state trovate in 4 o più linfonodi.
+
+La proporzione di eventi in donne con 4 o più linfonodi coivolti è molto più grande rispetto alla proporzione in donne con meno di 4 linfonodi coinvolti. Il numero di linfonodi è un'altra caratteristica importante per stabilire lo stadio della malattia. Metastasi regionali in 4 o più linfonodi caraterizzano gli stadi più avanzati della malattia.   
+
+### 1.5 La variabile 'ER' - status del recettore degli estrogeni
+
+La variabile 'ER' - status del recettore degli estrogeni è una variabile dicotomica con  categorie: 'Negative' e 'Positive'. Ai fini dell future analisi la variabile viene fattorizzata, con 'Positive' come valore di riferimento. 
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(dataF,aes(x = ER)) + 
+  geom_bar(width = 0.4,fill =c("dodgerblue4","light blue")) + 
+  geom_text(stat = 'count', aes(label =..count..),vjust =-0.5) + 
+  theme_bw() + 
+  theme_classic() + 
+  ylab("numero di donne") + 
+  ggtitle("Distribuzione delle pazienti per lo status del recettore degli estrogeni") 
+
+ggplot(dataF,aes(x =ER, fill=event)) + 
+  geom_bar(width = 0.2) + 
+  geom_text(stat = 'count',aes(label =..count..), position=position_dodge(width=0.9), vjust=-0.5, size = 0) + 
+  scale_fill_manual(values=c("dodgerblue4", "light blue")) +
+  theme_bw() + 
+  theme_classic() + 
+  ylab("Numero di donne") + 
+  ggtitle("Distribuzione di eventi per lo status del recettore degli estrogeni") 
+
+
+```
+
+
+27 donne su 144 sono risultate negative per il recettore degli estrogeni, 117 di loro sono state positive. 
+La proporzione di eventi è minore nelle donne positive per recettore degli estrogeni, che sono considerate di avere una prognosi migliore. 
+
+
+### 1.6 La variabile 'Grade' - grado del tumore
+
+La variabile 'Grade' -  grado del tumore è una variabile categorica con tre categorie: 'Well diff' (tumori ben differenziati), 'Intermediate'(tumori mediamente differenziati), 'Poorly diff' (tumori poco differenziati). 
+
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(dataF,aes(x = Grade)) + 
+  geom_bar(width = 0.4,fill =c("dodgerblue4","light blue", "red")) + 
+  geom_text(stat = 'count', aes(label =..count..),vjust =-0.5) + 
+  theme_bw() + 
+  theme_classic() + 
+  ylab("numero di donne") + 
+  ggtitle("Distribuzione delle pazienti per grado") 
+
+ggplot(dataF,aes(x =Grade, fill=event)) + 
+  geom_bar(width = 0.2) + 
+  geom_text(stat = 'count',aes(label =..count..), position=position_dodge(width=0.9), vjust=-0.5, size = 0) + 
+  scale_fill_manual(values=c("dodgerblue4", "light blue")) +
+  theme_bw() + 
+  theme_classic() + 
+  ylab("Numero di donne") + 
+  ggtitle("Distribuzione di eventi per per grado")
+
+```
+
+In 41 donne su 144 partecipanti allo studio il grado, ovvero la differenziazione delle cellule tumorali, è stata buona ("Well diff"), in 55 intermedia ("Intermediate"), mentre 48 di loro hanno avuto cellule tumorali poco diferenziate  ("Poorly diff"). La peggiore differenziazione corrisponde al grado più alto, ovvero allo stadio più avanzato della malattia. Per questo fatto nella fattorizzazione i livelli sono stati stabiliti in maniera seguente: "Well diff", "Intermediate" e infine "Poorly diff". 
+La maggiore proporzione di eventi viene registrata in donne con il grado più alto, ovvero con cellule tumorali poco differenziate. 
+
+
+### 1.7 La variabile 'Age' - età della paziente alla diagnosi
+ 
+La variabile 'Age' - età della paziente alla diagnosi è una variabile continua. 
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+boxplot(dataF$Age,col = "dodgerblue2",main ="Boxplot of Age",col.main="dodgerblue4")
+
+dataF %>%
+  ggplot( aes(x=Age, fill=event)) +
+    geom_histogram( color="#e9ecef", alpha=0.6, position = 'dodge') +
+    scale_fill_manual(values=c("dodgerblue4", "light blue")) +
+    labs(fill="", title="Age distirbution by event", x="Age", y="Numero di donne")
+    
+```    
+    
+La donna più giovane che ha partecipato allo studio ha avuto 26 anni, la più anziana 53. L'età media delle donne in studio è stata 44 anni, e il 50% delle partecipanti ha avuto da 26 a 45 anni. 
+
+### 1.8 Le variabili TSPYL5 ... C20orf46 - espressioni geniche
+
+In questo dataset ci sono 70 variabili con espressioni geniche di 70 geni potenzialmente prognostici. Sono variabili continue, con valori numerici, che di norma hanno un minimo negativo e un massimo positivo.
+
+
+
+## 2. Analisi univariata dell'associazione di variabili cliniche e l'outcome dello studio
+
+```{r eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+library(epitools)
+library(Epi)
+library(epiR)
+
+library(survival)
+library(survminer)
+
+```
+
+```{r eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+dataF2 <- data
+
+dataF2$Diam <- as.factor(dataF2$Diam)
+dataF2$N <- as.factor(dataF2$N)
+dataF2$ER <- factor(dataF2$ER, levels = c("Positive", "Negative"))
+dataF2$Grade <- factor(dataF2$Grade, levels = c("Well diff","Intermediate","Poorly diff"))
+
+```
+
+
+Con il modello di Cox è stata valutata l'associazione tra variabili cliniche (Diam, N, Er, Grade, Age) e l'outcome dello studio.
+
+### 2.1 Associazione tra la variabile Diam e l'outcome
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+varDiam.cox <- coxph(Surv(time, event) ~ Diam, data = dataF2)
+summary (varDiam.cox)
+    
+```    
+
+
+Il coeficiente **β = 0.6523** è significativamente diverso da 0, poiché il p-value è minore di 0.05 (p = 0.0319). Quindi, la variabile Diam  **è associata**  all'outcome dello studio. 
+
+Hazard ratio, ovvero l'exp(coef) è **1.92**, con intervallo di confindenza che è vicino a 1, ma per poco non lo comprende (**CI = (1.058, 3.483)**), ed è quindi significativamente diverso dall'1. Allora, le pazienti che hanno un tumore di diametro più grande di 2 cm hanno **2** volte maggiore l'azzardo di avere metastasi/morire rispetto alle donne con tumori di diametro minore di 2cm. Nella migliore delle ipotesi il loro azzardo di morire/avere metastasi è 1.1 volte maggiore, nella peggiore delle ipotesi è 3.5 volte maggiore. 
+
+Inoltre, i p-values per i tre overall tests (likelihood, Wald e logrank ) sono significanti, indicando che il modello è significante, ovvero che si respinge l'ipotesi nulla che tutti i coefficienti β (in questo abbiamo un coefficiente) sono nulli. 
+
+
+### 2.2 Associazione tra la variabile N e l'outcome
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+varN.cox <- coxph(Surv(time, event) ~ N, data = dataF2)
+summary (varN.cox)
+    
+```    
+
+Il coeficiente **β = 1.053** è significativamente diverso da 0, dato che il p-value è molto più piccolo di 0.05 ( p = 0.000295). Quindi, la variabile N  **è associata** all'outcome dello studio. 
+
+**HR = 2.867**, con intervallo di confindenza **CI = (1.621, 5.071)** che non comprende l'1, e si conclude che l'HR è significativamente diverso dall'1. Quindi, le pazienti che hanno più di 4 linfonodi coivolti hanno l'azzardo di avere metastasi/morire quasi **3** volte maggiore rispetto alle donne con meno di 4 linfonodi coinvolti. Nella migliore delle ipotesi il loro azzardo di morire/avere metastasi è 1.6 volte maggiore, nella peggiore delle ipotesi è 5 volte maggiore. 
+
+Anche in questo caso i p-values per i tre overall tests (likelihood, Wald e logrank ) sono significanti, indicando che il modello è significante, ovvero che non tutti i coefficienti β sono nulli (in quest'analisi univariata abbiamo un unico coefficiente β).
+
+
+### 2.3 Associazione tra la variabile ER e l'outcome
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+varER.cox <- coxph(Surv(time, event) ~ ER, data = dataF2)
+summary (varER.cox)
+    
+```    
+
+Il coefficiente **β = 0.7232** è significativamente diverso da 0, poiché il p-value è minore di 0.05 (p = 0.0265). Quindi, la variabile ER **è associata** all'outcome dello studio. 
+
+**HR = 2.061**, con intervallo di confindenza che è vicono a 1, ma non lo comprende (**CI = (1.088, 3.905)**), ed è quindi significativamente diverso dall'1. Allora, le pazienti che risultano negative per recettore degli estrogeni hanno **2** volte maggiore l'azzardo di avere metastasi/morire rispetto alle donne positive per recettore degli estrogeni. Nella migliore delle ipotesi il loro azzardo di morire/avere metastasi è 1.1 volte maggiore, nella peggiore delle ipotesi è quasi 4 volte maggiore. 
+
+I p-values per i tre overall tests (likelihood, Wald e logrank ) sono significanti, indicando che il modello è significante, ovvero che non tutti i coefficienti β sono nulli (in quest'analisi univariata abbiamo un unico coefficiente β).
+
+
+### 2.4 Associazione tra la variabile Grade e l'outcome
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+varGrade.cox <- coxph(Surv(time, event) ~ Grade, data = dataF2)
+summary (varGrade.cox)
+    
+```    
+
+Nella variabile Grade il livello di riferimento è "Well diff", ovvero tumore ben differenziato.
+
+Per la categoria "Intermediate" il coefficiente **β = 0.7716**, p-value maggiore di 0.05, **p = 0.0811**, quindi il il coefficiente non è significativamente diverso da 0 e non c'è associazione con l'outcome. 
+
+**HR = 2.163**, ma il livello di confidenza comprende 1, **CI =(0.909, 5.149)**, quindi HR non è significativamente diverso da 1. Di conseguenza, le pazienti i cui tumori sono mediamente differenziati hanno lo stesso azzardo di avere metastasi/morire come le pazienti con tumori ben differenziati. 
+
+Per la categoria "Poorly diff" il coefficiente **β = 1.1678**, p-value minore di 0.05, **p = 0.0073**, quindi il coefficiente è significativamente diverso da 0 e c'è associazione con l'outcome. 
+**HR = 3.215**, intervallo di confidenza non comprende 1, **CI = (1.370,7.546)**, e di conseguenza le pazienti con tumore poco differenziato hanno l'azzardo di avere metastasi/morire **3** volte maggiore delle pazienti con tumori ben differenziati. Nella migliore delle ipotesi gli azzardi sono quasi uguali (1.3 volte maggiore quello delgruppo "Poorly diff") in questi due gruppi di pazienti, mentre nella peggiore delle ipotesi è ben 7.5 volte maggiore quello delle donne con tumori poco differenziati. 
+
+I p-values per i tre overall tests (likelihood, Wald e logrank ) sono significanti, indicando che il modello è significante, ovvero che non tutti i coefficienti β sono nulli, ed in realtà il coefficiente relativo alla categoria "Poorly diff" è significativamente diverso da 0. 
+
+### 2.5 Associazione tra la variabile Age e l'outcome
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+varAge.cox <- coxph(Surv(time, event) ~ Age, data = dataF2)
+summary (varAge.cox)
+
+```    
+
+Il coefficiente **β = -0.05935**, p-value è minore di 0.05, **p = 0.02**, quindi il coefficiente è significativamente diverso da 0, c'è associazione tra età delle pazienti e l'outcome dello studio, e quest'associazione è negativa. Quindi l'età alla diagnosi più avanzata sarebbe un fattore protettivo. 
+
+**HR = 0.94** significa che per ogni anno in più alla diagnosi, l'azzardo di avere metastasi/morire diminuisce del **6%**.
+
+Come è stato detto, la variabile Age è una variabile contiua e verrà trattata come tale nel modello. Ma ai soli fini della migliore interpretazione dell'azzardo di avere metastasi/morire in donne di diverse classi di età, quasta variabile è stata categorizzata (si perdono informazioni, ma sarà più evidente l'interpretazione del hazard ratio). Le categorie di età sono:         
+
+1. "< 40"  (gruppo di riferimento)                 
+2. ">= 40  &  < 50"                         
+3. "> 50"                                                                                               
+                         
+Le categorie di età sono state scelte in base alla rappresentazione grafica della distribuzione di eventi per età (capitolo 1.7)
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+dataF2$Age1 <- ifelse(dataF2$Age < 40, 1, 0)
+dataF2$Age2 <- ifelse(dataF2$Age >= 40 & dataF2$Age < 50, 1,0)
+dataF2$Age3 <- ifelse(dataF2$Age >=50,  1, 0)
+
+varAgeF.cox <- coxph(Surv(time, event) ~ Age2 + Age3, data = dataF2)
+summary (varAgeF.cox)
+
+```
+
+Anche categorizzandola, la variabile Age ovviamente risulta associata all'outcome dello studio. In particolare i coefficienti β per entrambi i gruppi sono significativamente diversi da 0 (βAge2 = -1.0091, p = 0.00183; βAge3 = -1.3097, p = 0.00690). Entrambi i coefficienti sono negativi, quindi i loro HR sono minori di 0, ovvero entrambe categorie di età sono da considerare fattore protettivo. 
+
+L'azzardo nelle donne che hanno tra 40 e 50 anni è **0.36** volte l'azzardo delle donne done che hanno meno di 40 anni (**HR = 0.3645, CI = (0.1933, 0.6876)**). Ovvero, le donne più giovani (<40 anni) avrebbero l'azzardo di avere metastasi/morire quasi **3** volte maggiore(exp(-coef)=2.743)  delle donne che hanno tra 40 e 50 anni. 
+
+L'azzardo nelle donne che hanno più di 50 anni è **0.27** volte l'azzardo delle donne done che hanno meno di 40 anni (**HR = 0.3645, CI = (0.1044,0.6980)**). Ovvero, le donne più giovani (<40 anni) avrebbero l'azzardo di avere metastasi/morire quasi **4** volte maggiore (exp(-coef)=3.705)delle donne che hanno più di 50 anni. 
+
+A livello globale, i tre test risultano significativi, ovvero non tutti i coefficienti sono uguali a 0, confermando i risultati precedenti. 
+
+
+## 3. Modello predittivo di base
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+dataF3 <- data
+dataF3$Diam <- as.factor(dataF2$Diam)
+dataF3$N <- as.factor(dataF2$N)
+dataF3$ER <- factor(dataF2$ER, levels = c("Positive", "Negative"))
+dataF3$Grade <- factor(dataF2$Grade, levels = c("Well diff","Intermediate","Poorly diff"))
+
+modelloBase <- coxph(Surv(time, event) ~ Diam + N + ER +  Grade + Age, data = dataF3)
+summary (modelloBase)
+
+anova(modelloBase, test="Chisq")
+
+ggforest(modelloBase)
+
+
+```
+
+L'analisi univariata ha dimostrato che tutte e 6 le variabili cliniche sono risultate associate all'outcome dello studio. Nel modelo multivariato di base l'unico coefficiente significativamente diverso da 0 (perché il p-value è minore di 0.05) è quello della variabile N: 
+
+$$β = 0.737, p = 0.03$$.
+
+Quindi, nel modello multivariato la variabile N risulta l'unica variabile associata all'outcome dello studio. Questo significa che, a parità di tutte le altre variabili, le donne con più di 4 linfonodi coinvolti hanno **2** volte maggiore l'azzardo di avere metastasi/morire rispetto alle donne con meno di 4 linfonodi coinvolti. 
+
+I p-values per i tre test globali (likelihood, Wald e logrank ) sono significanti, indicando che il modello è significante, ovvero che non tutti i coefficienti β sono nulli. 
+
+L'analisi della devianza indica che il contributo delle tre variabili Diam, N ed ER è statisticamente significativo. 
+
+La rappresentazione grafica ottenuta con il **ggforest()** mette meglio in evidenza le covariate, i loro HR e anche i p-values, cioè significatività, l'indice di concordanza (0.71) e l'AIC (419.3).
+
+
+## 4. Valutazione forma funzionale delle variabili continue e assunzione PH
+
+### 4.1 Valutazione forma funzionale
+
+Tra variabili cliniche l'unica variabile continua è la variabile Age di cui si valuterà la forma funzionale. 
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+dataF4 <- dataF3
+
+#Valutazione forma funzionale di Age 
+
+ggcoxdiagnostics(modelloBase, type = "martingale",
+                 linear.predictions = FALSE, ggtheme = theme_bw())
+
+resMart <- resid(modelloBase, type="martingale")
+resMart
+plot(dataF4$Age, resMart, main="Check functional form of Age",
+     xlab = "Age", ylab = "Residuals", pch = 20)
+lines(loess.smooth(dataF4$Age, resMart), lwd = 2, col="blue")
+legend(x = "bottomleft", col = "blue", lwd = 2, legend = "LOESS fit", cex = 1.4)
+abline (h = 0, col = 2, lwd = 2)
+
+#Valutazione forma funzionale di LogAge 
+resMart <- resid(modelloBase, type="martingale")
+resMart
+plot(log(dataF4$Age), resMart, main="Check functional form of Log(Age)",
+     xlab = "Log(Age)", ylab = "Residuals", pch = 20)
+lines(loess.smooth(log(dataF4$Age), resMart), lwd = 2, col="blue")
+legend(x = "bottomleft", col = "blue", lwd = 2, legend = "LOESS fit", cex = 1.4)
+abline (h = 0, col = 2, lwd = 2)
+
+#Valutazione forma funzionale di Sqrt(Age)
+resMart <- resid(modelloBase, type="martingale")
+resMart
+plot(sqrt(dataF4$Age), resMart, main="Check functional form of Sqrt(Age)",
+     xlab = "Sqrt(Age)", ylab = "Residuals", pch = 20)
+lines(loess.smooth(sqrt(dataF4$Age), resMart), lwd = 2, col="blue")
+legend(x = "bottomleft", col = "blue", lwd = 2, legend = "LOESS fit", cex = 1.4)
+abline (h = 0, col = 2, lwd = 2)
+
+
+
+```    
+
+La forma funzionale delle variabili continue nel modello di Cox viene valutata con i residui di Martingale. Nella rapresentazione grafica della covariata Age vs. residui di Martingale non si distinguono pattern, come non si identificano trend della curva LOESS  (Local Linear Regression Curve) lungo i valori della covariata e si potrebbe concludere che la forma funzionale della covariata Age è soddisfatta, ovvero che la non-linearità è lieve.  
+
+Poiché un modo di risolvere la mancata linearità della covariata continua è la sua trasformazione, ho fatto rappresentazione grafica sia della trasformata Log(Age) che Sqrt(Age) vs. residui di Martingale. Le curve Loess delle due trasformate hanno la forma molto simile alla curva loess della covariata Age.  
+
+### 4.2 Valutazione assunzione PH
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+testPh <- cox.zph(modelloBase)
+testPh
+
+ggcoxzph(testPh, var = c("Diam", "N"))
+ggcoxzph(testPh, var = c("ER", "Grade"))
+ggcoxzph(testPh, var = "Age")
+
+
+ggcoxdiagnostics(modelloBase,
+ type = "schoenfeld",
+ ox.scale = "time") # age potrebbe non soddisfare PH
+```
+
+
+L'applicazione del modello di Cox prevede l'assunzione del "Proportional Hazard", ovvero che l'Hazard Ratio rimane costante nel tempo. Questa assunzione può essere valutata con il test statistici e diagnostica grafica basata su residui di Schoenfeld.
+
+Il risultato del ChiSq test suggerisce che la variabile Age potrebbe violare l'assunzione di PH, dato che il p-value è significativo, come lo è anche il p-value globale. Ma siccome è stato concluso che la forma funzionale della covariata Age soddisfi l'assunzione di linearità (più precisamente che la non-linearità era lieve), ci si aspetterebbe che fosse valida anche l'assunzione di PH per questa covariata. 
+
+Si dovrebbe verificare anche graficamente l'assunzione di PH. La diagnosi grafica è possibile tramite la funzione **ggcoxzph()** , che produce per ogni covariata un grafico di residui di Schoenfeld scalati vs. tempo. 
+
+Dai grafici si conclude che non ci sia un pattern di distribuzione dei residui lungo l'asse del tempo per le covariate Diam, N, ER e Grade. Per quanto riguarda la covariata Age sembra che ci sia una lievissima tendenza crescente.
+
+Non avendo esperienza nell'interpretazione grafica dei residui di Schoenfeld mi verrebbe da concludere che anche la covariata Age soddisfi l'assunzione di PH, in particolare perché è stata valutata la forma funzionale come soddisfacente. 
+
+Quando l'assunzione di PH non c'è, una delle soluzioni possibili è la stratificazione, che in questo caso è impossibile perché la covariata Age è continua (si potrebbe stratificare soltanto categorizzando la variabile, ma così soi perderebbero informazioni e si ridurebbe la potenza del modello). L'altra soluzione è aggiustare il modello aggiungendo l'effetto di interazione della covariata con il tempo (Age*time), che non mi sembra abbia senso. 
+
+Comunque, per verificare meglio l'asunzione PH ho usato anche la funzione **"ggcoxdiagnostics()"**, precisando il tipo di residui (Schoenfeld). I risultati grafici ottenuti a prima vista sembrano  piuttosto diversi dai grafici ottenuti con il **ggcoxzph()** - qui è evidente un trend crescente nei residui della covariata Age, anche le altre covariate sembrerebbero avere comportamenti strani.  
+
+
+## 5. Associazione tra variabili di espressioni geniche e l'outcome 
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+dataF5 <- dataF3
+
+vars<-colnames (dataF5[,9:78])
+#vars
+output<-lapply(vars,function(var) {
+  formula    <- as.formula(paste("Surv(time,event)~",var))
+  fit.uni <- coxph(formula,data = dataF5)
+  beta <- coef(fit.uni)
+  se   <- sqrt(diag(fit.uni$var))
+  CI   <- round(exp(confint(fit.uni)), 5)
+  round(c(exp(beta), CI, p=1-pchisq((beta/se)^2, 1)),5)
+})
+results<-as.data.frame(matrix(unlist(output),ncol=4,byrow=T))
+names(results)<-c("HR","lower95%CI","upper95%CI","p")
+results$features<-vars
+
+results <- as.data.table(results) 
+
+results$qBH<-p.adjust(results$p,method="BH")
+
+resultsSelected <- results[results$qBH < 0.05,]
+resultsSorted <- resultsSelected [order(qBH)]
+resultsSorted
+
+```    
+
+L'analisi univariata di ciascuna delle variabili di espressione genica è stata aggiustata con il metodo di Benjamini-Hochberg che controlla il FDR (False Discovery Rate). In seguito sono state selezionate le variabili con associazione significativa, ovvero con il p-value aggiustato minore di 0.05 (qBH < 0.05): 
+
+"PRC1", "QSCN6L1","NUSAP1","CENPA", "ZNF533", "ORC6L", "NM_004702", "IGFBP5.1", "MELK" e "IGFBP5". 
+
+
+## 6. Selezione variabili di espressione genica associate all'outcome tramite modello di Cox penalizzato con metodo Lasso
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+library(corrplot)
+library(glmnet)
+
+```    
+ 
+ 
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+dataF6 <- dataF3
+
+X <- model.matrix(~., subset(dataF6, select = -c(id, time, event)))
+set.seed(05042019)
+cv.lasso<-cv.glmnet(x = X[, -1], y = Surv(dataF6$time, dataF6$event),family = 'cox', nfold = 10,alpha=1)
+plot(cv.lasso$lambda, cv.lasso$cvm, type = "l", lwd = 3, xlab = bquote(lambda), ylab = "Partial Likelihood Deviance")
+points(cv.lasso$lambda[which.min(cv.lasso$cvm)], min(cv.lasso$cvm),pch = 16, col = 2)
+
+opt.lambda<-cv.lasso$lambda[which.min(cv.lasso$cvm)]
+opt.lambda.coef<-as.numeric(coef(cv.lasso,s=opt.lambda))
+
+#selected features:
+rownames(coef(cv.lasso))[opt.lambda.coef!=0]
+```   
+
+Le variabili selezionate tramite il modello di Cox penalizzato con il metodo Lasso, quelle con il valore ottimale del coefficiente ʎ, sono le seguenti: QSCN6L1, ZNF533, IGFBP5.1, PRC1.   
+
+## 7. Modello predittivo "aumentato"
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+modelloAumentato <- coxph(Surv(time, event) ~ Diam + N + ER +  Grade + Age + QSCN6L1 + ZNF533 +   IGFBP5.1 + PRC1, data = dataF6)
+
+summary (modelloAumentato)
+
+anova (modelloAumentato)
+
+ggforest(modelloAumentato)
+
+anova( modelloBase, modelloAumentato)
+
+```    
+
+
+
+Nel modello "aumentato" i coefficienti significativi ce li hanno le variabili Diam, Age e PRC1.
+
+L'analisi della devianza di questo modello indica che il contributo delle variabili Diam, N, ER, QSCNGL1, ZNF533 E PRC1 nel diminuire il loglikelihood è statisticamente significativo. 
+
+Il grafico prodotto dalla funzione ggforest() riassume il modello "aumentato" indicando: valori di  HR con i rispettivi intervalli di confidenza per ogni covariata, p-values di ogni covariata, l'indice di concordanza (0.81) e l'Akaike Information Criterion (AIC = 405.36). 
+
+Il modello di base (**modelloBase**) ha un'indice di concordanza pari a 0.71, mentre il modello aumentato (**modelloAumentato**) ha l'indice di concordanza di 0.81  - aggiungendo le covariate di espressione genica è aumentato significativamente l'indice di concordanza. 
+
+Inoltre, l' Akaike's Information Criterion (AIC) del modello aumentato risulta 405.36, mentre quello del modello di base è 419.3 che indica, come anche l'indice di concordanza, la maggiore qualità (fit) del modello aumentato. 
+
+Ed in realtà il paragone tra i due modelli con l'analisi della devianza dimostra anche che il modello aumentato (loglik -192.68) è migliore del modello base (-203.65) e questo miglioramento è statisticamente significativo.
+
+
+## 8. Predizione rischio di evento
+
+Per predire il rischio di evento ad un time-point fisso ( t = 12 mesi), sono state scelte tre pazienti tra le partecipanti allo studio con id 15, 61 e 140.
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+library(riskRegression)
+library(rms) 
+
+dataF8 <- dataF3
+
+pazienti <- dataF8[c(15,61,140),]
+
+ 
+fitMB<-survfit(modelloBase,newdata=pazienti)
+pazienti$riskdeathMB<-1-as.numeric(summary(fitMB,times=12)$surv)
+
+fitMA<-survfit(modelloAumentato,newdata=pazienti)
+pazienti$riskdeathMA<-1-as.numeric(summary(fitMA,times=12)$surv)
+
+risultato <- pazienti[,c(2,79,80)]
+risultato
+
+
+```
+
+Nella tabella si riporta il valore del tempo di evento di ciascuna delle tre pazienti, come i loro rischi di evento calcolati con il modello di base e il modello "aumentato". I risultati dimostrano che i rischi calcolati in base al modello "aumentato" talvolta sono maggiori e talvolta minori rispetto a quelli calcolati in base al modello con sole covariate cliniche. In base a questi risultati non si potrebbe concludere che un modello fosse migliore dell'altro, in primo luogo perché l'abbiamo verificato solo su tre soggetti. Il modello di base ha calcolato per due volte il rischio maggiore di evento per pazienti che effettivamente hanno avuto evento prima del time-point fissato, mentre il modello aumentato lo ha fatto per una paziente. 
+
+## 9. Conclusione
+
+L'obiettivo di questo studio è stato la costruzione di due modelli di rischio: uno con sole covariate cliniche e l'altro sia con variabili cliniche che con variabili di espressione genica selezionate tramite regressione penalizzata. 
+
+Dai risultati ottenuti nell'applicazione di questi due modelli per calcolare il rischio di eventi delle tre pazienti del dataset usato (con noto tempo di evento) non è stato possibile concludere che un modello sia migliore dell'altro, e i risultati finali di entrambi i modelli non sono tanto affidabili. In base all'indice di concordanza e l'AIC, il modello aumentato è decisamente migliore, e si potrebbe concludere che le covariate di espressione genica si possano considerare predittori validi.  
+
+Il dataset usato per la costruzione di questi modelli ha avuto 144 osservazioni e 48 eventi. Il modello di base è stato costruito con 5 covariate cliniche, mentre quello aumentato è stato sviluppato con 9 covariate (5 cliniche e 4 espressioni geniche). 
+
+Poiché ci vorrebbero almeno 10 eventi per ogni covariata inclusa nel modello, sarebbe stato opportuno avere un datasest più numeroso e con maggior numero di eventi per avere modelli più affidabili. 
+
+Il problema più grande che ho riscontrato facendo questo progetto sono state le interpretazioni dei grafici per la valutazione della forma funzionale della covariata Age e la valutazione dell'assunzione di PH. Poiché non sembra che ci siano regole precise, l'interpretazione è "libera" e per un unico grafico si trovano diverse interpretazioni nella letteratura disponibile online.
+In particolare, grafici ottenuti con diverse funzioni sembrano a volte diversi (anche perché talvolta non sono le stesse quantità sugli assi, talvolta lo spazio disponibile per grafico e le proporzioni non sono uguali), il che rende ancora più difficile fare "diagnosi visive".
+Ovviamente, l'esperienza (che manca) e la conoscenza approfondita del dataset aiutano a trarre conlusioni appropriate. 
+
+
+
+
+
+
+
+
